@@ -1,0 +1,21 @@
+streamlit>=1.28.0
+pandas>=1.5.0
+geopandas>=0.13.0
+plotly>=5.15.0
+openpyxl>=3.0.0
+xlrd>=2.0.0
+pyarrow>=12.0.0
+
+# For geospatial/choropleth and advanced visualization
+streamlit-folium>=0.13.0
+folium>=0.14.0
+
+# Optional for improved table interactivity
+st-aggrid>=0.3.3
+
+# For PDF export
+fpdf>=1.7.2
+pdfkit>=1.0.0
+
+# For forecasting
+statsmodels>=0.13.0
