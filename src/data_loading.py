@@ -19,7 +19,7 @@ def load_population_data():
 
 @lru_cache(maxsize=1)
 def load_facility_metadata():
-    fac_file = os.path.join(DATA_DIR, '..', 'Uganda_Shape_files_2020', 'GEO MFL SURVEY DATASET.xlsx')
+    fac_file = os.path.join(DATA_DIR, 'Uganda_Shape_files_2020', 'GEO MFL SURVEY DATASET.xlsx')
     return pd.read_excel(fac_file)
 
 @lru_cache(maxsize=1)
