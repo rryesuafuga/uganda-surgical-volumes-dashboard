@@ -2,6 +2,7 @@
 import tempfile
 from fpdf import FPDF
 import io
+import streamlit as st
 
 def dataframe_to_pdf(df, title="Exported Table"):
     pdf = FPDF()
@@ -21,7 +22,29 @@ def dataframe_to_pdf(df, title="Exported Table"):
     return tmpfile.name
 
 def plotly_export(fig, fmt='png'):
-    buf = io.BytesIO()
-    fig.write_image(buf, format=fmt)
-    buf.seek(0)
-    return buf
+    """
+    Export plotly figure to image format.
+    Returns None if kaleido is not available.
+    """
+    try:
+        # Try to import kaleido for image export
+        import kaleido
+        buf = io.BytesIO()
+        fig.write_image(buf, format=fmt)
+        buf.seek(0)
+        return buf
+    except ImportError:
+        st.warning(f"Image export requires the 'kaleido' package. Install it with: pip install kaleido")
+        return None
+    except Exception as e:
+        st.error(f"Error exporting image: {str(e)}")
+        return None
+
+def safe_download_button(label, data, filename, mime_type, key=None):
+    """
+    Create a download button only if data is available
+    """
+    if data is not None:
+        st.download_button(label, data, file_name=filename, mime=mime_type, key=key)
+    else:
+        st.info(f"Install 'kaleido' package to enable {filename} downloads")
