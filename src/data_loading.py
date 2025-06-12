@@ -24,5 +24,5 @@ def load_facility_metadata():
 
 @lru_cache(maxsize=1)
 def load_shapefile():
-    shp_file = os.path.join(DATA_DIR, '..', 'Uganda_Shape_files_2020', 'Region', 'UDHS_Regions_2019.shp')
+    shp_file = os.path.join(DATA_DIR, 'Uganda_Shape_files_2020', 'Region', 'UDHS_Regions_2019.shp')
     return gpd.read_file(shp_file)
