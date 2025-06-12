@@ -10,9 +10,6 @@ pyarrow>=12.0.0
 streamlit-folium>=0.13.0
 folium>=0.14.0
 
-# Optional for improved table interactivity
-st-aggrid>=0.3.3
-
 # For PDF export
 fpdf>=1.7.2
 pdfkit>=1.0.0
