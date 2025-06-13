@@ -1,4 +1,4 @@
-# src/data_loading.py
+# src/data_loading.py (CORRECTED for population data handling)
 import os
 import pandas as pd
 import geopandas as gpd
@@ -9,7 +9,7 @@ import streamlit as st
 DATA_DIR = 'data/raw'
 YEARS = [2020, 2021, 2022, 2023, 2024]
 
-# File path patterns - updated to handle different naming conventions
+# File path patterns - updated based on actual Colab file structure
 SURGICAL_DATA_PATTERNS = [
     'Uganda Surgical Procedures_raw data_{year}.csv',
     'Uganda_Surgical_Procedures_raw_data_{year}.csv',
@@ -17,12 +17,13 @@ SURGICAL_DATA_PATTERNS = [
     'Uganda Surgical Procedures_{year}.csv'
 ]
 
+# CORRECTED: Population data patterns based on Colab structure
 POPULATION_DATA_PATTERNS = [
     'Uganda Population Data 2024/Population_census 2024.xlsx',
-    'Uganda Population Data 2024/Population by district_census 2024.xlsx',
+    'Uganda Population Data 2024/Population by Subregion, 2024.xlsx',  # This is the correct sheet from Colab
     'Uganda Population Data 2024/District population, 2024.xlsx',
     'Population_census_2024.xlsx',
-    'Population by district_census 2024.xlsx',
+    'Population by Subregion, 2024.xlsx',
     'District population, 2024.xlsx'
 ]
 
@@ -99,7 +100,8 @@ def load_surgical_data(year):
 @lru_cache(maxsize=1)
 def load_population_data():
     """
-    Load population data with flexible file pattern matching
+    Load population data with CORRECTED sheet handling based on Colab analysis
+    The Colab analysis used 'Population by Subregion, 2024' sheet specifically
     """
     file_path = find_file(POPULATION_DATA_PATTERNS)
     
@@ -119,16 +121,17 @@ def load_population_data():
         raise FileNotFoundError(error_msg)
     
     try:
-        # Try different sheet names for Excel files
+        # CORRECTED: Handle Excel files properly based on Colab logic
         if file_path.endswith('.xlsx'):
             # First, get all sheet names
             xl_file = pd.ExcelFile(file_path)
             sheet_names = xl_file.sheet_names
+            print(f"Available sheets in population file: {sheet_names}")
             
-            # Try common sheet name patterns
+            # CORRECTED: Priority order based on what Colab actually used
             sheet_patterns = [
-                'Population by Subregion, 2024',
-                'District population, 2024',
+                'Population by Subregion, 2024',  # This is what Colab used
+                'District population, 2024',       # Alternative for district-level
                 'Population_census 2024',
                 'Population by district',
                 'District population',
@@ -140,19 +143,55 @@ def load_population_data():
             for pattern in sheet_patterns:
                 if pattern in sheet_names:
                     sheet_to_use = pattern
+                    print(f"Using sheet: {sheet_to_use}")
                     break
             
             if sheet_to_use is None:
                 # Use the first sheet and warn
                 sheet_to_use = sheet_names[0]
-                st.warning(f"Using sheet '{sheet_to_use}' from available sheets: {sheet_names}")
+                st.warning(f"Using default sheet '{sheet_to_use}' from available sheets: {sheet_names}")
             
             df = pd.read_excel(file_path, sheet_name=sheet_to_use)
+            
+            # CORRECTED: Apply the same column standardization as in Colab
+            print(f"Original population data columns: {list(df.columns)}")
+            
+            # The Colab code expected these columns for subregion data
+            expected_columns = ['Region', 'Male', 'Female', 'Total']
+            if list(df.columns) != expected_columns and len(df.columns) >= 4:
+                # Get the actual first 4 columns, whatever they're called
+                current_columns = list(df.columns)[:4]
+                # Create a mapping from current to expected column names
+                column_mapping = dict(zip(current_columns, expected_columns))
+                # Rename the columns
+                df = df.rename(columns=column_mapping)
+                print(f"Renamed columns to: {df.columns.tolist()}")
         else:
             df = pd.read_csv(file_path)
         
         print(f"Successfully loaded population data: {df.shape}")
-        print(f"Population columns: {list(df.columns)}")
+        print(f"Population data sample:")
+        print(df.head())
+        
+        # CRITICAL: Ensure numeric columns are numeric
+        for col in ['Male', 'Female', 'Total']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Remove any completely null rows
+        df = df.dropna(how='all')
+        
+        # Calculate total population for verification
+        if 'Total' in df.columns:
+            total_pop = df['Total'].sum()
+            print(f"Total population in loaded data: {total_pop:,}")
+            
+            # If total population is still 0 or very low, there might be an issue
+            if total_pop < 1000000:  # Uganda should have 40+ million people
+                print("WARNING: Total population seems unusually low")
+                print("Sample of population data:")
+                print(df[['Region', 'Total']].head(10))
+        
         return df
         
     except Exception as e:
@@ -249,9 +288,7 @@ def load_shapefile():
         return None
 
 def get_data_directory_info():
-    """
-    Get information about the data directory structure for debugging
-    """
+    """Get information about the data directory structure for debugging"""
     info = {
         'data_dir_exists': os.path.exists(DATA_DIR),
         'data_dir_path': os.path.abspath(DATA_DIR) if os.path.exists(DATA_DIR) else 'Not found',
@@ -288,10 +325,7 @@ def get_data_directory_info():
     return info
 
 def validate_data_files():
-    """
-    Validate that required data files are available
-    Returns a dictionary with validation results
-    """
+    """Validate that required data files are available"""
     validation = {
         'surgical_data': {},
         'population_data': {'available': False, 'path': None, 'error': None},

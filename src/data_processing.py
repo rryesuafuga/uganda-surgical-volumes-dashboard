@@ -1,6 +1,7 @@
 # src/data_processing.py (CORRECTED based on Colab analysis)
 import pandas as pd
 import numpy as np
+import streamlit as st
 
 # Region name mapping from Colab analysis
 REGION_MAPPING = {
@@ -32,6 +33,8 @@ def identify_procedure_columns(df):
 
 def clean_and_process_surgical_data(df):
     """Clean and process surgical data exactly like in the Colab analysis"""
+    df = df.copy()  # Work with a copy to avoid modifying original
+    
     # Clean district names by removing " District" suffix
     if 'orgunitlevel3' in df.columns:
         df['District'] = df['orgunitlevel3'].str.replace(' District', '', case=False).str.strip()
@@ -51,25 +54,17 @@ def clean_and_process_surgical_data(df):
         for col in procedure_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
-        # Sum all procedure columns for each row (facility)
+        # Sum all procedure columns for each row (facility) - CRITICAL COLAB LOGIC
         df['total_procedures'] = df[procedure_cols].sum(axis=1)
         df['Surgical Procedures'] = df['total_procedures']  # For compatibility
+        
+        # Log totals for debugging
+        total_procs = df['total_procedures'].sum()
+        print(f"Total procedures calculated: {total_procs:,}")
     else:
         print("Warning: No procedure columns found!")
         df['Surgical Procedures'] = 0
-    
-    return df
-
-def clean_numeric_columns(df):
-    """Clean and convert numeric columns to proper types"""
-    # Apply surgical data processing first
-    df = clean_and_process_surgical_data(df)
-    
-    # Convert other potential numeric columns
-    numeric_columns = ['Population', 'Procedures', 'Total Procedures', 'Count', 'Total']
-    for col in numeric_columns:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        df['total_procedures'] = 0
     
     return df
 
@@ -78,6 +73,12 @@ def process_population_data(pop_df):
     Process population data to handle different column naming and structure
     Based on the Colab logic for population data processing
     """
+    if pop_df is None or len(pop_df) == 0:
+        print("Warning: Empty population dataframe received")
+        return pd.DataFrame()
+    
+    pop_df = pop_df.copy()  # Work with copy
+    
     print("Processing population data...")
     print(f"Original population data shape: {pop_df.shape}")
     print(f"Original population columns: {list(pop_df.columns)}")
@@ -108,34 +109,70 @@ def process_population_data(pop_df):
     # Create lowercase version for matching
     pop_df['region_lower'] = pop_df['Region'].str.lower()
 
+    # CRITICAL: Handle Buganda consolidation like in Colab
+    north_buganda = pop_df['region_lower'].str.contains('north buganda', na=False) | pop_df['region_lower'].str.contains('north central', na=False)
+    south_buganda = pop_df['region_lower'].str.contains('south buganda', na=False) | pop_df['region_lower'].str.contains('south central', na=False)
+
+    if north_buganda.any() or south_buganda.any():
+        print("Found separate North/South Buganda regions in population data, combining...")
+
+        # Get all Buganda parts
+        buganda_parts = pop_df[north_buganda | south_buganda].copy()
+
+        if not buganda_parts.empty:
+            # Calculate combined totals for Buganda
+            buganda_male = buganda_parts['Male'].sum()
+            buganda_female = buganda_parts['Female'].sum()
+            buganda_total = buganda_parts['Total'].sum()
+
+            # Create new combined Buganda row
+            buganda_row = pd.DataFrame({
+                'Region': ['Buganda'],
+                'Male': [buganda_male],
+                'Female': [buganda_female],
+                'Total': [buganda_total],
+                'region_lower': ['buganda']
+            })
+
+            # Remove individual Buganda parts
+            pop_df = pop_df[~(north_buganda | south_buganda)]
+
+            # Add combined Buganda row
+            pop_df = pd.concat([pop_df, buganda_row], ignore_index=True)
+
+            print(f"Combined Buganda population: Male={buganda_male:,}, Female={buganda_female:,}, Total={buganda_total:,}")
+
     print(f"Processed population data shape: {pop_df.shape}")
-    print(f"Population data sample:")
-    print(pop_df.head())
+    print(f"Total population in processed data: {pop_df['Total'].sum():,}")
     
     return pop_df
 
 def filter_by_region(df, region):
-    df = clean_numeric_columns(df)
+    """Filter surgical data by region"""
+    df = clean_and_process_surgical_data(df)
     if region == 'All' or 'Region' not in df.columns:
         return df
     return df[df['Region'] == region]
 
 def annual_volume_table(df, pop):
     """Create annual volume table with CORRECTED population handling"""
-    df = clean_numeric_columns(df)
-    pop = process_population_data(pop.copy())  # Process population data properly
+    df = clean_and_process_surgical_data(df)
+    pop = process_population_data(pop)
+    
+    if pop.empty:
+        st.error("Population data is empty after processing")
+        return pd.DataFrame()
     
     # Use the processed surgical procedures column
     proc_col = 'Surgical Procedures'
     
     # CORRECTED: Use proper facility identification
-    # The issue was using wrong column for facility count
     if 'orgunitlevel3' in df.columns:
-        facility_col = 'orgunitlevel3'  # This is the actual facility identifier
+        facility_col = 'orgunitlevel3'
     elif 'Facility Code' in df.columns:
         facility_col = 'Facility Code'
     else:
-        facility_col = df.columns[0]  # Fallback
+        facility_col = df.columns[0]
     
     print(f"Using facility column: {facility_col}")
     print(f"Unique facilities in data: {df[facility_col].nunique()}")
@@ -163,6 +200,10 @@ def annual_volume_table(df, pop):
         # Calculate total population correctly
         total_population = pop['Total'].sum()
         print(f"Total population calculated: {total_population:,}")
+        
+        if total_population == 0:
+            st.error("Total population is 0 - check population data processing")
+            return agg
         
         if 'Region' in pop.columns and 'Region' in agg.columns:
             # Try to merge by region
@@ -196,7 +237,7 @@ def annual_volume_table(df, pop):
 
 def procedure_categories_table(df):
     """Create procedure categories table with better categorization"""
-    df = clean_numeric_columns(df)
+    df = clean_and_process_surgical_data(df)
     
     if 'Category' in df.columns:
         result = df.groupby('Category').agg({'Surgical Procedures': 'sum'}).reset_index()
@@ -265,8 +306,8 @@ def facility_distribution_table(fac):
 
 def district_heatmap_data(df, pop):
     """Create district heatmap data with corrected population handling"""
-    df = clean_numeric_columns(df)
-    pop = process_population_data(pop.copy())
+    df = clean_and_process_surgical_data(df)
+    pop = process_population_data(pop)
     
     if 'District' in df.columns:
         map_df = df.groupby('District').agg({'Surgical Procedures': 'sum'}).reset_index()
@@ -295,7 +336,7 @@ def district_heatmap_data(df, pop):
 
 def trends_timeseries_data(years, load_func, pop):
     """Create time series data with corrected population handling"""
-    pop = process_population_data(pop.copy())
+    pop = process_population_data(pop)
     dfs = []
     
     # Get total population correctly
@@ -309,7 +350,7 @@ def trends_timeseries_data(years, load_func, pop):
     for y in years:
         try:
             df_y = load_func(y)
-            df_y = clean_numeric_columns(df_y)  # This now includes procedure processing
+            df_y = clean_and_process_surgical_data(df_y)  # This now includes procedure processing
             
             total = df_y['Surgical Procedures'].sum()
             rate = (total / pop_total * 100_000).round(1) if pop_total > 0 else 0
@@ -321,3 +362,40 @@ def trends_timeseries_data(years, load_func, pop):
             dfs.append({'Year': y, 'Procedures': 0, 'Rate per 100k': 0})
     
     return dfs
+
+def calculate_national_metrics(df, pop):
+    """Calculate national-level metrics like in the Colab dashboard"""
+    df = clean_and_process_surgical_data(df)
+    pop = process_population_data(pop)
+    
+    # Calculate total procedures (sum of all procedure columns per facility, then sum all facilities)
+    total_procedures = df['Surgical Procedures'].sum()
+    
+    # Calculate reporting facilities
+    if 'orgunitlevel3' in df.columns:
+        facility_col = 'orgunitlevel3'
+    elif 'Facility Code' in df.columns:
+        facility_col = 'Facility Code'
+    else:
+        facility_col = df.columns[0]
+    
+    total_facilities = df[facility_col].nunique()
+    
+    # Calculate total population
+    if 'Total' in pop.columns:
+        total_population = pop['Total'].sum()
+    else:
+        total_population = 0
+    
+    # Calculate rate per 100,000
+    if total_population > 0:
+        proc_rate = (total_procedures / total_population) * 100_000
+    else:
+        proc_rate = 0
+    
+    return {
+        'total_procedures': total_procedures,
+        'total_facilities': total_facilities,
+        'total_population': total_population,
+        'proc_rate': proc_rate
+    }
