@@ -1,4 +1,4 @@
-# main.py (Updated with proper data processing from Colab analysis)
+# main.py (CORRECTED with proper Colab logic implementation)
 import streamlit as st
 import os
 import pandas as pd
@@ -7,7 +7,9 @@ import geopandas as gpd
 import traceback
 
 from src.data_loading import load_surgical_data, load_population_data, load_facility_metadata, load_shapefile, YEARS
-from src.data_processing import filter_by_region, annual_volume_table, procedure_categories_table, facility_distribution_table, district_heatmap_data, trends_timeseries_data
+from src.data_processing import (filter_by_region, annual_volume_table, procedure_categories_table, 
+                                facility_distribution_table, district_heatmap_data, trends_timeseries_data,
+                                calculate_national_metrics)
 from src.export_helpers import dataframe_to_pdf, plotly_export, safe_download_button
 from src.forecasting import forecast_procedure_rate
 
@@ -318,7 +320,7 @@ tabs = st.tabs([
     'About'
 ])
 
-# === 1. National Dashboard (KPIs) ===
+# === 1. National Dashboard (KPIs) - FIXED ===
 with tabs[0]:
     st.header(f"Uganda National Surgical Volumes Dashboard: {year_selected}")
     
@@ -330,45 +332,25 @@ with tabs[0]:
     col1, col2, col3, col4 = st.columns(4)
     
     try:
-        # Calculate total procedures
-        if 'Surgical Procedures' in df_filtered.columns:
-            total_procedures = int(df_filtered['Surgical Procedures'].sum())
-        else:
-            total_procedures = 0
-            st.warning("No 'Surgical Procedures' column found after processing")
-        
-        # Calculate reporting facilities
-        facility_col = 'Facility Code' if 'Facility Code' in df_filtered.columns else df_filtered.columns[0]
-        total_facilities = int(df_filtered[facility_col].nunique())
-        
-        # Calculate population and rate
-        pop_col = 'Population' if 'Population' in pop.columns else 'Total'
-        if pop_col in pop.columns:
-            total_pop = int(pop[pop_col].sum())
-            if total_pop > 0:
-                proc_rate = (total_procedures / total_pop) * 100_000
-            else:
-                proc_rate = 0
-        else:
-            total_pop = 0
-            proc_rate = 0
+        # CORRECTED: Use the new calculation function
+        metrics = calculate_national_metrics(df_filtered, pop)
         
         # Display metrics
         with col1:
-            st.metric('Total Procedures', f"{total_procedures:,}")
+            st.metric('Total Procedures', f"{metrics['total_procedures']:,}")
         
         with col2:
-            st.metric('Reporting Facilities', f"{total_facilities:,}")
+            st.metric('Reporting Facilities', f"{metrics['total_facilities']:,}")
         
         with col3:
-            st.metric('Total Population', f"{total_pop:,}")
+            st.metric('Total Population', f"{metrics['total_population']:,}")
         
         with col4:
-            st.metric('Procedures per 100,000', f"{proc_rate:,.1f}")
+            st.metric('Procedures per 100,000', f"{metrics['proc_rate']:,.1f}")
         
         # Additional insights
-        if total_procedures > 0:
-            st.success(f"✅ Successfully processed {total_procedures:,} surgical procedures from {total_facilities} facilities")
+        if metrics['total_procedures'] > 0:
+            st.success(f"✅ Successfully processed {metrics['total_procedures']:,} surgical procedures from {metrics['total_facilities']:,} facilities")
         else:
             st.error("❌ No surgical procedures found. Please check data processing.")
             
@@ -522,36 +504,55 @@ with tabs[4]:
         map_df = district_heatmap_data(df_filtered, pop)
         
         if map_df is not None and gdf is not None:
-            # Try to merge with shapefile
-            if 'District' in gdf.columns:
-                gdf_merged = gdf.merge(map_df, left_on='District', right_on='District', how='left')
+            # CORRECTED: Try multiple possible district column names
+            district_columns = ['District', 'district', 'DISTRICT', 'Name', 'NAME', 'DName', 'DNAME', 'ADM2_EN', 'ADM2_NAME']
+            
+            shapefile_district_col = None
+            for col in district_columns:
+                if col in gdf.columns:
+                    shapefile_district_col = col
+                    break
+            
+            if shapefile_district_col:
+                st.info(f"Using shapefile column: {shapefile_district_col}")
+                
+                # Create standardized district names for matching
+                gdf['district_std'] = gdf[shapefile_district_col].str.lower().str.strip()
+                map_df['district_std'] = map_df['District'].str.lower().str.strip()
+                
+                # Merge with shapefile
+                gdf_merged = gdf.merge(map_df, left_on='district_std', right_on='district_std', how='left')
                 
                 if 'Proc Rate/100k' in gdf_merged.columns:
-                    fig = px.choropleth(
-                        gdf_merged,
-                        geojson=gdf_merged.geometry,
-                        locations=gdf_merged.index,
-                        color='Proc Rate/100k',
-                        hover_name='District',
-                        title=f'Surgical Procedures per 100,000 Population ({year_selected})',
-                        color_continuous_scale='viridis'
-                    )
-                    fig.update_geos(fitbounds="locations", visible=False)
-                    st.plotly_chart(fig, use_container_width=True)
+                    # Create choropleth map using geopandas plotting
+                    import matplotlib.pyplot as plt
+                    
+                    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+                    gdf_merged.plot(column='Proc Rate/100k', 
+                                   ax=ax, 
+                                   legend=True, 
+                                   cmap='viridis',
+                                   missing_kwds={'color': 'lightgrey'})
+                    ax.set_title(f'Surgical Procedures per 100,000 Population ({year_selected})')
+                    ax.set_axis_off()
+                    
+                    st.pyplot(fig)
                     
                     # Show data table
                     st.subheader("District Data")
                     st.dataframe(map_df, use_container_width=True)
                     
-                    # Export options
-                    buf_png = plotly_export(fig, 'png')
-                    buf_tiff = plotly_export(fig, 'tiff')
-                    safe_download_button('Download Map (PNG)', buf_png, 'district_heatmap.png', 'image/png', key='map_png')
-                    safe_download_button('Download Map (TIFF)', buf_tiff, 'district_heatmap.tiff', 'image/tiff', key='map_tiff')
+                    # Show matching stats
+                    matched_districts = gdf_merged['Proc Rate/100k'].notna().sum()
+                    total_districts = len(gdf_merged)
+                    st.info(f"Successfully matched {matched_districts} of {total_districts} districts")
+                    
                 else:
                     st.warning("Could not calculate procedure rates. Check population data.")
+                    st.write("Available columns after merge:", list(gdf_merged.columns))
             else:
-                st.warning("District column not found in shapefile")
+                st.warning(f"District column not found in shapefile. Available columns: {list(gdf.columns)}")
+                st.write("Tried these column names:", district_columns)
         else:
             st.warning("Geographic data not available. Check district columns and shapefile.")
             if map_df is not None:
